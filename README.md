@@ -38,7 +38,7 @@ Duration depending on Configuration and Hardware: ~3h per Object
 
 ## Requirements: Software
 
-Linux, Python 2.7
+Linux, Python 2.7 / Python 3 (experimental)
 
 GLFW for OpenGL: 
 ```bash
@@ -50,16 +50,23 @@ sudo apt-get install libassimp-dev
 ```
 
 Tensorflow >= 1.6  
-OpenCV >= 3.1  
+OpenCV >= 3.1
 
 ```bash
 pip install --user --pre --upgrade PyOpenGL PyOpenGL_accelerate
 pip install --user cython
 pip install --user cyglfw3
-pip install --user pyassimp
+pip install --user pyassimp==3.3
 pip install --user imgaug
 pip install --user progressbar
 ```
+
+### Headless Rendering
+Please note that we use the GLFW context as default which does not support headless rendering. To allow for both, onscreen rendering & headless rendering on a remote server, set the context to EGL: 
+```
+export PYOPENGL_PLATFORM='egl'
+```
+In order to make the EGL context work, you might need to change PyOpenGL like [here](https://github.com/mcfletch/pyopengl/issues/27)
 
 ## Preparatory Steps
 
@@ -81,9 +88,6 @@ ae_init_workspace
 ```
 
 ## Train an Augmented Autoencoder
-```diff
-- Currently remote training is not supported since glfw 3.2. does not allow headless rendering
-```
 
 *1. Create the training config file. Insert the paths to your 3D model and background images.*
 ```bash
@@ -93,15 +97,19 @@ gedit $AE_WORKSPACE_PATH/cfg/exp_group/my_autoencoder.cfg
 ```
 
 *2. Generate and check training data. The object views should be strongly augmented but identifiable.*
+
 (Press *ESC* to close the window.)
 ```bash
 ae_train exp_group/my_autoencoder -d
 ```
-This command does not start training.
+This command does not start training and should be run on a PC with a display connected.  
+
 Output:
 ![](docs/training_images_29999.png)
 
 *3. Train the model*
+(See the [Headless Rendering](#headless-rendering) section if you want to train directly on a server without display)
+
 ```bash
 ae_train exp_group/my_autoencoder
 ```
