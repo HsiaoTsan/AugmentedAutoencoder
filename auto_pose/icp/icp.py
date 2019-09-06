@@ -162,8 +162,6 @@ class ICP():
     def icp_refinement(self,depth_crop, R_est, t_est, K_test, test_render_dims, depth_only=False, no_depth=False,clas_idx=0):
         synthetic_pts = self.syn_renderer.generate_synthetic_depth(K_test, R_est, t_est, test_render_dims, clas_idx=clas_idx)
         centroid_synthetic_pts = np.mean(synthetic_pts, axis=0) # millimeter
-        print(depth_crop.shape, synthetic_pts.shape)
-        print(depth_crop[0], synthetic_pts[0])
         print("mean depth of syn depth:", np.mean(synthetic_pts))
         max_mean_dist = np.max(np.linalg.norm(synthetic_pts - centroid_synthetic_pts,axis=1))
         print 'max_mean_dist', max_mean_dist
@@ -176,7 +174,7 @@ class ICP():
         real_depth_pts = real_depth_pts[real_synmean_dist < max_mean_dist_factor*max_mean_dist]
         print 'filtered number of points real and syn: ', len(real_depth_pts), len(synthetic_pts)
 
-        if len(real_depth_pts) < N:
+        if len(real_depth_pts) == 0: # lxc
             print("filtered real depth points not enough: ", len(real_depth_pts))
             return (R_est, t_est)
 
