@@ -5,18 +5,18 @@ import glob
 import math
 import numpy as np
 from write_xml import *
-import meshrenderer as mr
-import meshrenderer_phong as mr_phong
+import auto_pose.meshrenderer.meshrenderer as mr
+import auto_pose.meshrenderer.meshrenderer_phong as mr_phong
 import cv2
 
-from pysixd import view_sampler
-from pysixd import transform
+from .pysixd import view_sampler
+from .pysixd import transform
 
 class SceneRenderer(object):
 
-    def __init__(self, 
-        models_cad_files, 
-        vertex_tmp_store_folder, 
+    def __init__(self,
+        models_cad_files,
+        vertex_tmp_store_folder,
         vertex_scale,
         width,
         height,
@@ -35,6 +35,7 @@ class SceneRenderer(object):
         self._models_cad_files = models_cad_files
         self._width = width
         self._height = height
+        self._radius = radius
         self._K = K
         self._augmenters = augmenters
         self._min_num_objects_per_scene = min_num_objects_per_scene
@@ -49,15 +50,15 @@ class SceneRenderer(object):
         print len(self._voc_imgs)
         if model_type == 'reconst':
             self._renderer = mr_phong.Renderer(
-                self._models_cad_files, 
-                1, 
+                self._models_cad_files,
+                1,
                 vertex_tmp_store_folder=vertex_tmp_store_folder,
                 vertex_scale=vertex_scale
             )
         elif model_type == 'cad':
             self._renderer = mr.Renderer(
-                self._models_cad_files, 
-                1, 
+                self._models_cad_files,
+                1,
                 vertex_tmp_store_folder=vertex_tmp_store_folder,
                 vertex_scale=vertex_scale
             )
@@ -67,8 +68,7 @@ class SceneRenderer(object):
 
         azimuth_range =  (0, 2 * math.pi)
         elev_range =  (-0.5 * math.pi, 0.5 * math.pi)
-
-        self.all_views, _ = view_sampler.sample_views(min_n_views, radius, azimuth_range, elev_range)    
+        self.all_views, _ = view_sampler.sample_views(min_n_views, radius, azimuth_range, elev_range)
 
 
     def render(self):
@@ -76,7 +76,7 @@ class SceneRenderer(object):
             N =  self._min_num_objects_per_scene
         else:
             N = np.random.randint(
-                self._min_num_objects_per_scene, 
+                self._min_num_objects_per_scene,
                 self._max_num_objects_per_scene
                 )
         views = np.random.choice(self.all_views, N)
@@ -91,17 +91,18 @@ class SceneRenderer(object):
             success = False
             while not success:
 
-                tz = np.random.triangular(160,500,1200)
+                tz = np.random.triangular(self._radius-self._radius/3,self._radius,self._radius+self._radius/3)
 
                 tx = np.random.uniform(-0.35 * tz * self._width / self._K[0,0], 0.35 * tz * self._width / self._K[0,0])
                 ty = np.random.uniform(-0.35 * tz * self._height / self._K[1,1], 0.35 * tz * self._height / self._K[1,1])
-                
+
                 t = np.array([tx, ty, tz])
                 R = transform.random_rotation_matrix()[:3,:3]
                 t_norm = t/np.linalg.norm(t)
 
                 if len(ts_norm) > 0 and np.any(np.dot(np.array(ts_norm),t_norm.reshape(3,1)) > 0.99):
                     success = False
+                    print 'fail'
                 else:
                     ts_norm.append(t_norm)
                     ts.append( t )
@@ -109,17 +110,16 @@ class SceneRenderer(object):
                     success = True
 
 
-        bgr, depth, bbs, obj_ids_new = self._renderer.render_many(
-            obj_is, 
-            self._width, 
-            self._height, 
-            self._K.copy(), 
-            Rs, 
-            ts, 
-            self._near_plane, 
+        bgr, depth, bbs = self._renderer.render_many(
+            obj_is,
+            self._width,
+            self._height,
+            self._K.copy(),
+            Rs,
+            ts,
+            self._near_plane,
             self._far_plane,
-            random_light=True,
-            return_new_obj_ids=True # add by lxc
+            random_light=True
         )
 
 
@@ -133,16 +133,7 @@ class SceneRenderer(object):
         bgr = rand_voc*(depth_three_chan==0.0).astype(np.uint8) + bgr*(depth_three_chan>0).astype(np.uint8)
 
         obj_info = []
-        print("obj_is:",obj_is)
-        print("obj_ids_new:", obj_ids_new)
-        if len(obj_ids_new) == 0:
-            bgr = (bgr*255.0).astype(np.uint8)
-
-            return bgr, obj_info
-        print("self.obj_ids[np.array(obj_ids_new)]:",self.obj_ids[np.array(obj_ids_new)])
-        for (x, y, w, h), obj_id in zip(bbs, self.obj_ids[np.array(obj_ids_new)]): 
-            # len(bbs) may be smaller than self.obj_ids[np.array(obj_is)]
-            # because some model bounding box can not be calculated
+        for (x, y, w, h), obj_id in zip(bbs, self.obj_ids[np.array(obj_is)]):
             xmin = np.minimum(x, x+w)
             xmax = np.maximum(x, x+w)
             ymin = np.minimum(y, y+h)

@@ -4,9 +4,9 @@ import os
 import argparse
 import configparser
 
-from webcam_video_stream import WebcamVideoStream
 from auto_pose.ae.utils import get_dataset_path
 from aae_retina_pose_estimator import AePoseEstimator
+
 
 
 parser = argparse.ArgumentParser()
@@ -25,10 +25,9 @@ if workspace_path == None:
 test_configpath = os.path.join(workspace_path,'cfg_eval',args.test_config)
 test_args = configparser.ConfigParser()
 test_args.read(test_configpath)
-
+icp = test_args.get('ICP', 'icp')
 ae_pose_est = AePoseEstimator(test_configpath)
 
-videoStream = WebcamVideoStream(0, ae_pose_est._width, ae_pose_est._height).start()
 
 if args.vis:
     from auto_pose.meshrenderer import meshrenderer
@@ -43,42 +42,113 @@ if args.vis:
 
 color_dict = [(0,255,0),(0,0,255),(255,0,0),(255,255,0)] * 10
 
-while videoStream.isActive():
 
-    image = videoStream.read()
 
-    boxes, scores, labels = ae_pose_est.process_detection(image)
 
-    all_pose_estimates, all_class_idcs = ae_pose_est.process_pose(boxes, labels, image)
+import keras
+from keras_retinanet import models
+from keras_retinanet.utils.image import read_image_bgr, preprocess_image, resize_image
+from keras_retinanet.utils.visualization import draw_box, draw_caption
+from keras_retinanet.utils.colors import label_color
+import matplotlib.pyplot as plt
+import os
+import time
+import tensorflow as tf
+labels_to_names = { 0: 'bottle',
+                    1: 'box',
+                    2: 'brush',
+                    3: 'cabbage',
+                    4: 'dolphin',
+                    5: 'eggplant',
+                    6: 'hedgehog',
+                    7: 'lion',
+                    8: 'polarbear',
+                    9: 'squirrel'}
 
-    if args.vis:
-        bgr, depth,_ R= renderer.render_many(obj_ids = [clas_idx for clas_idx in all_class_idcs],
-                    W = ae_pose_est._width,
-                    H = ae_pose_est._height,
-                    K = ae_pose_est._camK, 
-                    # R = transform.random_rotation_matrix()[:3,:3],
-                    Rs = [pose_est[:3,:3] for pose_est in all_pose_estimates],
-                    ts = [pose_est[:3,3] for pose_est in all_pose_estimates],
-                    near = 10,
-                    far = 10000,
-                    random_light=False,
-                    phong={'ambient':0.4,'diffuse':0.8, 'specular':0.3})
+# def get_session():
+#     config = tf.ConfigProto()
+#     config.gpu_options.allow_growth = True
+#     return tf.Session(config=config)
 
-        bgr = cv2.resize(bgr,(ae_pose_est._width,ae_pose_est._height))
+
+# keras.backend.tensorflow_backend.set_session(get_session())
+# model_path = '/home/robot/lxc/scripts/graspProject/detection_models/snapshots/resnet50_pascal_01_converted_to_inference.h5'
+# model = models.load_model(model_path, backbone_name='resnet50')
+# try:
+#     model = models.convert_model(model)
+# except:
+#     print("model had been converted to inference before.")
+
+
+import pyrealsense2 as rs
+# Configure depth and color streams
+pipeline = rs.pipeline()
+config = rs.config()
+if icp: config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+# Start streaming
+pipeline.start(config)
+
+
+
+
+try:
+    while True:
+        frames = pipeline.wait_for_frames()
+        color_frame = frames.get_color_frame()
+        depth_frame = frames.get_depth_frame() if icp else None
+        if icp:
+            if not color_frame or not depth_frame: # if color or depth not loaded, skip this loop
+                continue
+        else:
+            if not color_frame: # if color not loaded, skip this loop
+                continue
+
+        image = np.asanyarray(color_frame.get_data())
+        depth_image = np.asanyarray(depth_frame.get_data()) if icp else None
+
+        start = time.time()
+        boxes, scores, labels = ae_pose_est.process_detection(image)
+        all_pose_estimates, all_class_idcs = ae_pose_est.process_pose(boxes, labels, image, depth_img=depth_image)
+        print("processing time: ", time.time() - start)
+
         
-        g_y = np.zeros_like(bgr)
-        g_y[:,:,1]= bgr[:,:,1]    # green channel
-        im_bg = cv2.bitwise_and(image,image,mask=(g_y[:,:,1]==0).astype(np.uint8))                 
-        image_show = cv2.addWeighted(im_bg,1,g_y,1,0)
 
-        #cv2.imshow('pred view rendered', pred_view)
-        for label,box,score in zip(labels,boxes,scores):
-            box = box.astype(np.int32)
-            xmin,ymin,xmax,ymax = box[0],box[1],box[0]+box[2],box[1]+box[3]
-            print label
-            cv2.putText(image_show, '%s : %1.3f' % (label,score), (xmin, ymax+20), cv2.FONT_ITALIC, .5, color_dict[int(label)], 2)
-            cv2.rectangle(image_show,(xmin,ymin),(xmax,ymax),(255,0,0),2)
+        if args.vis:
+            bgr, depth,_ = renderer.render_many(obj_ids = [clas_idx for clas_idx in all_class_idcs],
+                        W = ae_pose_est._width,
+                        H = ae_pose_est._height,
+                        K = ae_pose_est._camK, 
+                        # R = transform.random_rotation_matrix()[:3,:3],
+                        Rs = [pose_est[:3,:3] for pose_est in all_pose_estimates],
+                        ts = [pose_est[:3,3] for pose_est in all_pose_estimates],
+                        near = 10,
+                        far = 10000,
+                        random_light=False,
+                        phong={'ambient':0.4,'diffuse':0.8, 'specular':0.3})
 
-        #cv2.imshow('', bgr)
-        cv2.imshow('real', image_show)
-        cv2.waitKey(1)
+            bgr = cv2.resize(bgr,(ae_pose_est._width,ae_pose_est._height))
+            
+            g_y = np.zeros_like(bgr)
+            g_y[:,:,1]= bgr[:,:,1]    
+            im_bg = cv2.bitwise_and(image,image,mask=(g_y[:,:,1]==0).astype(np.uint8))                 
+            image_show = cv2.addWeighted(im_bg,1,g_y,1,0)
+
+            #cv2.imshow('pred view rendered', pred_view)
+            for label,box,score in zip(labels,boxes,scores):
+                box = box.astype(np.int32)
+                xmin,ymin,xmax,ymax = box[0],box[1],box[0]+box[2],box[1]+box[3]
+                print label
+                cv2.putText(image_show, '%s : %1.3f' % (label,score), (xmin, ymax+20), cv2.FONT_ITALIC, .5, color_dict[int(label)], 2)
+                cv2.rectangle(image_show,(xmin,ymin),(xmax,ymax),(255,0,0),2)
+
+            # cv2.imshow('', bgr)
+            cv2.imshow('real', image_show)
+
+            cv2.waitKey(1)
+
+finally:
+    # Stop streaming
+    print("stoping streaming...")
+    pipeline.stop()
+    print("streamming stopped.")
