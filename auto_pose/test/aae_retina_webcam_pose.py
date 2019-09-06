@@ -78,6 +78,11 @@ align_to = rs.stream.color
 align = rs.align(align_to)
 
 try:
+    save_video = True
+    if save_video:
+        fourcc = cv2.VideoWriter_fourcc(*'XVID')
+        out = cv2.VideoWriter('output.avi', fourcc, 15.0, (640*2,480))
+
     while True:
         # Get frameset of color and depth
         frames = pipeline.wait_for_frames()
@@ -138,10 +143,21 @@ try:
 
             # cv2.imshow('', bgr)
 
+
+
             if icp:
                 depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
                 # Stack both images horizontally
                 image_show = np.hstack((image_show, depth_colormap))
+
+            if save_video:
+                if out.isOpened():
+                    print("writing video.")
+                    out.write(image_show)
+
+
+
+
             cv2.imshow('real', image_show)
 
             cv2.waitKey(1)
@@ -151,3 +167,6 @@ finally:
     print("stoping streaming...")
     pipeline.stop()
     print("streamming stopped.")
+
+    if save_video:
+        out.release()

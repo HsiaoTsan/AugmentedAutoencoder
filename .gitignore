@@ -7,3 +7,5 @@ __pycache__/
 /.cache
 *original.py
 *(copy).py
+*.avi
+*.mp4
