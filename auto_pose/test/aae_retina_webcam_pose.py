@@ -86,27 +86,45 @@ pipeline = rs.pipeline()
 config = rs.config()
 if icp: config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
 config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+
 # Start streaming
-pipeline.start(config)
+profile = pipeline.start(config)
 
+# Getting the depth sensor's depth scale (see rs-align example for explanation)
+depth_sensor = profile.get_device().first_depth_sensor()
+depth_scale_sr = depth_sensor.get_depth_scale() # multiplies this to get meter unit in depth map 
+print("Depth Scale for RealSense SR300 is: " , depth_scale_sr)
 
-
+# Create an align object
+# rs.align allows us to perform alignment of depth frames to others frames
+# The "align_to" is the stream type to which we plan to align depth frames.
+align_to = rs.stream.color
+align = rs.align(align_to)
 
 try:
     while True:
+        # Get frameset of color and depth
         frames = pipeline.wait_for_frames()
-        color_frame = frames.get_color_frame()
-        depth_frame = frames.get_depth_frame() if icp else None
-        if icp:
-            if not color_frame or not depth_frame: # if color or depth not loaded, skip this loop
-                continue
-        else:
-            if not color_frame: # if color not loaded, skip this loop
-                continue
+        # frames.get_depth_frame() is a 640x360 depth image
+        
+        # Align the depth frame to color frame
+        aligned_frames = align.process(frames)
+        
+        # Get aligned frames
+        aligned_depth_frame = aligned_frames.get_depth_frame() # aligned_depth_frame is a 640x480 depth image
+        color_frame = aligned_frames.get_color_frame()
+        
+        # Validate that both frames are valid
+        if not aligned_depth_frame or not color_frame:
+            continue
+        
+        depth_image = np.asanyarray(aligned_depth_frame.get_data())
+        color_image = np.asanyarray(color_frame.get_data())
 
-        image = np.asanyarray(color_frame.get_data())
-        depth_image = np.asanyarray(depth_frame.get_data()) if icp else None
-
+        image = color_image
+        MM_SCALE = depth_scale_sr*1000 # convert to mm
+        depth_image = MM_SCALE*depth_image
+        
         start = time.time()
         boxes, scores, labels = ae_pose_est.process_detection(image)
         all_pose_estimates, all_class_idcs = ae_pose_est.process_pose(boxes, labels, image, depth_img=depth_image)
@@ -143,6 +161,11 @@ try:
                 cv2.rectangle(image_show,(xmin,ymin),(xmax,ymax),(255,0,0),2)
 
             # cv2.imshow('', bgr)
+
+            if icp:
+                depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
+                # Stack both images horizontally
+                image_show = np.hstack((image_show, depth_colormap))
             cv2.imshow('real', image_show)
 
             cv2.waitKey(1)

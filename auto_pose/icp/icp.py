@@ -7,7 +7,7 @@ from renderer import SynRenderer
 # Constants
 N = 3000                                 # number of random points in the dataset
 dim = 3                                     # number of dimensions of the points
-max_mean_dist_factor = 4.0
+max_mean_dist_factor = 1.0
 angle_change_limit = 0.35 # = 20 deg #0.5236=30 deg
 
 
@@ -161,25 +161,26 @@ class ICP():
 
     def icp_refinement(self,depth_crop, R_est, t_est, K_test, test_render_dims, depth_only=False, no_depth=False,clas_idx=0):
         synthetic_pts = self.syn_renderer.generate_synthetic_depth(K_test, R_est, t_est, test_render_dims, clas_idx=clas_idx)
-        centroid_synthetic_pts = np.mean(synthetic_pts, axis=0)
+        centroid_synthetic_pts = np.mean(synthetic_pts, axis=0) # millimeter
+        print(depth_crop.shape, synthetic_pts.shape)
+        print(depth_crop[0], synthetic_pts[0])
+        print("mean depth of syn depth:", np.mean(synthetic_pts))
         max_mean_dist = np.max(np.linalg.norm(synthetic_pts - centroid_synthetic_pts,axis=1))
-        # print 'max_mean_dist', max_mean_dist
+        print 'max_mean_dist', max_mean_dist
         K_test_crop = K_test.copy()
         K_test_crop[0,2] = depth_crop.shape[0]/2
         K_test_crop[1,2] = depth_crop.shape[1]/2
         real_depth_pts = misc.rgbd_to_point_cloud(K_test_crop,depth_crop)[0]
-
-        print 'noofpoints real/syn: ', len(real_depth_pts)
+        print 'number of real depth points: ', len(real_depth_pts)
         real_synmean_dist = np.linalg.norm(real_depth_pts-centroid_synthetic_pts,axis=1)
         real_depth_pts = real_depth_pts[real_synmean_dist < max_mean_dist_factor*max_mean_dist]
-        print 'filtered noofpoints real/syn: ', len(real_depth_pts), len(synthetic_pts)
+        print 'filtered number of points real and syn: ', len(real_depth_pts), len(synthetic_pts)
 
-        print 'real min max x', np.min(real_depth_pts[:,0]), np.max(real_depth_pts[:,0])
-        print 'real min max y', np.min(real_depth_pts[:,1]), np.max(real_depth_pts[:,1])
-        print 'real min max z', np.min(real_depth_pts[:,2]), np.max(real_depth_pts[:,2])
-        print 'syn min max x', np.min(synthetic_pts[:,0]), np.max(synthetic_pts[:,0])
-        print 'syn min max y', np.min(synthetic_pts[:,1]), np.max(synthetic_pts[:,1])
-        print 'syn min max z', np.min(synthetic_pts[:,2]), np.max(synthetic_pts[:,2])
+        if len(real_depth_pts) < N:
+            print("filtered real depth points not enough: ", len(real_depth_pts))
+            return (R_est, t_est)
+
+
 
 
         if len(real_depth_pts) < len(synthetic_pts)/8.:
@@ -187,6 +188,13 @@ class ICP():
             R_refined = R_est
             t_refined = t_est
         else:
+            print 'real min max x', np.min(real_depth_pts[:,0]), np.max(real_depth_pts[:,0])
+            print 'real min max y', np.min(real_depth_pts[:,1]), np.max(real_depth_pts[:,1])
+            print 'real min max z', np.min(real_depth_pts[:,2]), np.max(real_depth_pts[:,2])
+            print 'syn min max x', np.min(synthetic_pts[:,0]), np.max(synthetic_pts[:,0])
+            print 'syn min max y', np.min(synthetic_pts[:,1]), np.max(synthetic_pts[:,1])
+            print 'syn min max z', np.min(synthetic_pts[:,2]), np.max(synthetic_pts[:,2])
+
             sub_idcs_real = np.random.choice(len(real_depth_pts),np.min([len(real_depth_pts),len(synthetic_pts),N]))
             sub_idcs_syn = np.random.choice(len(synthetic_pts),np.min([len(real_depth_pts),len(synthetic_pts),N]))
 

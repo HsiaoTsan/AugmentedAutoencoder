@@ -48,7 +48,7 @@ class AePoseEstimator:
 
         if self.icp:
             self._depth_scale = test_args.getfloat('DATA','depth_scale')
-
+            print("depth scale:", self._depth_scale)
         self.all_codebooks = []
         self.all_train_args = []
         self.pad_factors = []
@@ -102,11 +102,15 @@ class AePoseEstimator:
         size = int(np.maximum(h, w) * pad_factor)
 
         
-        left = np.maximum(x+w//2-size//2, 0)
-        right = x+w//2+size/2
-        top = np.maximum(y+h//2-size//2, 0)
-        bottom = y+h//2+size//2
-
+        # left = np.maximum(x+w//2-size//2, 0)
+        # right = x+w//2+size//2
+        # top = np.maximum(y+h//2-size//2, 0)
+        # bottom = y+h//2+size//2
+        left = x
+        right = x+w
+        top = y
+        bottom = y+h
+        print("left {} right {} top {} bottom {}".format(left, right, top, bottom))
         scene_crop = scene_img[top:bottom, left:right].copy()
 
         if black_borders:
@@ -155,6 +159,8 @@ class AePoseEstimator:
             if bb_xywh[2] < 0 or bb_xywh[3] < 0:
                 continue
 
+            if label in filtered_labels: # only single instance for each class
+                continue
             filtered_boxes.append(bb_xywh)
             filtered_scores.append(score)
             filtered_labels.append(label)
@@ -172,7 +178,7 @@ class AePoseEstimator:
 
         for j,(box_xywh,label) in enumerate(zip(filtered_boxes,filtered_labels)):
             H_est = np.eye(4)
-
+            print("box_xywh:", box_xywh)
             try:
                 clas_idx = self.class_names.index(label)
             except:
@@ -200,17 +206,29 @@ class AePoseEstimator:
 
             if self.icp:
                 assert H == depth_img.shape[0]
-
+                
+                print("mean real depth:", np.mean(depth_img))
+                # interpo_method = cv2.INTER_NEAREST
+                interpo_method = cv2.INTER_LINEAR
                 depth_crop = self.extract_square_patch(depth_img, 
                                                     box_xywh,
                                                     self.pad_factors[clas_idx],
                                                     resize=self.patch_sizes[clas_idx], 
-                                                    interpolation=cv2.INTER_NEAREST) * self._depth_scale
+                                                    interpolation=interpo_method) / self._depth_scale
+                print("mean real crop depth:", np.mean(depth_crop))
+
+                x, y, w, h = np.array(box_xywh).astype(np.int32)
+                print(x,y,w,h)
+                print("mean real crop depth:", np.mean(depth_img[y:y+h, x:x+w]))
+
                 R_est_auto = R_est.copy()
                 t_est_auto = t_est.copy()
-
+                print("t_est:", t_est)
+                # first refine: Rotation and Translation.
                 R_est, t_est = self.icp_handle.icp_refinement(depth_crop, R_est, t_est, self._camK, (W,H), clas_idx=clas_idx, depth_only=True)
-                _, ts_est, _ = self.all_codebooks[clas_idx].auto_pose6d(self.sess, 
+                
+                # second refine: depth only.
+                _, ts_est = self.all_codebooks[clas_idx].auto_pose6d(self.sess, 
                                                                             det_img, 
                                                                             box_xywh, 
                                                                             self._camK,
@@ -219,6 +237,8 @@ class AePoseEstimator:
                                                                             upright=self._upright,
                                                                             depth_pred=t_est[2])
                 t_est = ts_est.squeeze()
+
+                # third refine: Rotation only.
                 R_est, _ = self.icp_handle.icp_refinement(depth_crop, R_est, ts_est.squeeze(), self._camK, (W,H), clas_idx=clas_idx, no_depth=True)
                 # depth_crop = self.extract_square_patch(depth_img, 
                 #                                     box_xywh,
