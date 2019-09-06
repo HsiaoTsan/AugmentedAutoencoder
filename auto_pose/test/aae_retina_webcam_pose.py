@@ -54,30 +54,6 @@ import matplotlib.pyplot as plt
 import os
 import time
 import tensorflow as tf
-labels_to_names = { 0: 'bottle',
-                    1: 'box',
-                    2: 'brush',
-                    3: 'cabbage',
-                    4: 'dolphin',
-                    5: 'eggplant',
-                    6: 'hedgehog',
-                    7: 'lion',
-                    8: 'polarbear',
-                    9: 'squirrel'}
-
-# def get_session():
-#     config = tf.ConfigProto()
-#     config.gpu_options.allow_growth = True
-#     return tf.Session(config=config)
-
-
-# keras.backend.tensorflow_backend.set_session(get_session())
-# model_path = '/home/robot/lxc/scripts/graspProject/detection_models/snapshots/resnet50_pascal_01_converted_to_inference.h5'
-# model = models.load_model(model_path, backbone_name='resnet50')
-# try:
-#     model = models.convert_model(model)
-# except:
-#     print("model had been converted to inference before.")
 
 
 import pyrealsense2 as rs
@@ -124,7 +100,7 @@ try:
         image = color_image
         MM_SCALE = depth_scale_sr*1000 # convert to mm
         depth_image = MM_SCALE*depth_image
-        
+
         start = time.time()
         boxes, scores, labels = ae_pose_est.process_detection(image)
         all_pose_estimates, all_class_idcs = ae_pose_est.process_pose(boxes, labels, image, depth_img=depth_image)
