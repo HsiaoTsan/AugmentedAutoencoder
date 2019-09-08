@@ -53,6 +53,7 @@ from keras_retinanet.utils.colors import label_color
 import matplotlib.pyplot as plt
 import os
 import time
+import datetime
 import tensorflow as tf
 
 
@@ -80,8 +81,9 @@ align = rs.align(align_to)
 try:
     save_video = True
     if save_video:
+        timestring = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
         fourcc = cv2.VideoWriter_fourcc(*'XVID')
-        out = cv2.VideoWriter('output.avi', fourcc, 15.0, (640*2,480))
+        out = cv2.VideoWriter('./outputvideo/{}.mp4'.format(timestring), fourcc, 15.0, (640*2,480))
 
     while True:
         # Get frameset of color and depth
