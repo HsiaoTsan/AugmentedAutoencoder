@@ -114,7 +114,7 @@ r'''
 
 ''' % file)
 
-    def save(self, pdf=True, filename = 'report.tex',open_pdf=True):
+    def save(self, pdf=False, filename = 'report.tex',open_pdf=True):
         data = ''.join(self.latex)
         full_filename = os.path.join(self.eval_dir,'latex','report.tex')
         with open(full_filename, 'w+') as f:

@@ -24,7 +24,7 @@ def main():
     use_euclidean means the similarity between test embedding and template embedding 
     are computed using Euclidean Distance
     '''
-    use_euclidean = False
+    #use_euclidean = False
 
 
 
@@ -52,17 +52,44 @@ def main():
     eval_args.read(eval_cfg_file_path)
     
     #[DATA]
+    # target data params
     dataset_name = eval_args.get('DATA','DATASET')
     obj_id = eval_args.getint('DATA','OBJ_ID')
     scenes = eval(eval_args.get('DATA','SCENES')) if len(eval(eval_args.get('DATA','SCENES'))) > 0 else eval_utils.get_all_scenes_for_obj(eval_args)
     cam_type = eval_args.get('DATA','cam_type')
-    data_params = dataset_params.get_dataset_params(dataset_name, model_type='', train_type='', test_type=cam_type, cam_type=cam_type)
+    model_type = 'reconst' if dataset_name == 'tless' else '' # model_type set to reconst only for tless.
+
+    data_params = dataset_params.get_dataset_params(dataset_name, model_type=model_type, train_type='', test_type=cam_type, cam_type=cam_type)
+    target_models_info = inout.load_yaml(data_params['models_info_path']) # lxc
+
+    # source data params, lxc
+    source_dataset_name = 'toyotalight'
+    # source_dataset_name = train_args.get('DATA','DATASET') # TODO train args no section DATA
+    # source_obj_id = train_args.getint('DATA','OBJ_ID') # TODO train args no section DATA
+    source_obj_id = int(train_cfg_file_path[-6:-4]) # TODO workaround
+    source_data_params = dataset_params.get_dataset_params(source_dataset_name, model_type='', train_type='', test_type='', cam_type='')
+    # for tless temporarily.
+    # source_data_params = dataset_params.get_dataset_params(source_dataset_name, model_type='', train_type='', test_type='kinect', cam_type='kinect')
+    source_models_info = inout.load_yaml(source_data_params['models_info_path'])
+    print("source_models_info_path:", source_data_params['models_info_path'])
+    # 'diameter' is not equal to sqrt(x^2+y^2+z^2) for hinterstoisser, rutgers, tless, tejaniDB. etc.
+    # for toyotalight, 'diameter' == sqrt(...).
+    target_models_3Dlength = np.linalg.norm([target_models_info[obj_id][key] for key in ['size_x', 'size_y', 'size_z']])
+    source_models_3Dlength = np.linalg.norm([source_models_info[source_obj_id][key] for key in ['size_x', 'size_y', 'size_z']])
+
+    target_source_length_ratio = target_models_3Dlength / source_models_3Dlength
+    print("target_source_length_ratio:",target_source_length_ratio)
+    print("source id {:02d}, target id {:02d}".format(source_obj_id, obj_id))
+    print('basepath: ', data_params['base_path'])
     #[BBOXES]
     estimate_bbs = eval_args.getboolean('BBOXES', 'ESTIMATE_BBS')
     #[METRIC]
     top_nn = eval_args.getint('METRIC','TOP_N')
     #[EVALUATION]
     icp = eval_args.getboolean('EVALUATION','ICP')    
+
+
+
 
     evaluation_name = evaluation_name + '_icp' if icp else evaluation_name
     evaluation_name = evaluation_name + '_bbest' if estimate_bbs else evaluation_name
@@ -72,6 +99,11 @@ def main():
     log_dir = u.get_log_dir(workspace_path, experiment_name, experiment_group)
     ckpt_dir = u.get_checkpoint_dir(log_dir)
     eval_dir = u.get_eval_dir(log_dir, evaluation_name, data)
+
+    # if eval_args.getboolean('EVALUATION','EVALUATE_ERRORS'):    
+    #     eval_loc.match_and_eval_performance_scores(eval_args, eval_dir)
+    #     exit()
+
 
     if not os.path.exists(eval_dir):
         os.makedirs(eval_dir)
@@ -103,9 +135,7 @@ def main():
     R_errors = []
     all_test_visibs = []
 
-    # if eval_args.getboolean('EVALUATION','EVALUATE_ERRORS'):    
-    #     eval_loc.match_and_eval_performance_scores(eval_args, eval_dir)
-    #     exit()
+
 
     test_embeddings = []  
     for scene_id in scenes:
@@ -153,6 +183,10 @@ def main():
         if not os.path.exists(scene_res_dir):
             os.makedirs(scene_res_dir)
 
+
+
+
+
         for view in xrange(noof_scene_views): # for example, LINEMOD ape noof_scene_views = 1236
             try:
                 # only a specified object id is selected throughout the whole scene views.
@@ -181,12 +215,15 @@ def main():
 
 
                 '''modify here to change the pose estimation algorithm. lxc'''
+
                 Rs_est, ts_est = codebook.auto_pose6d(sess, 
-                                                                    test_crop, 
-                                                                    test_bb, 
-                                                                    Ks_test[view].copy(), 
-                                                                    top_nn, 
-                                                                    train_args)
+                                                    test_crop, 
+                                                    test_bb, 
+                                                    Ks_test[view].copy(), 
+                                                    top_nn, 
+                                                    train_args,
+                                                    target_source_length_ratio=target_source_length_ratio
+                                                    )
                 ae_time = time.time() - start
                 run_time = ae_time + bb_preds[view][0]['det_time'] if estimate_bbs else ae_time
 
@@ -253,10 +290,14 @@ def main():
     if not os.path.exists(os.path.join(eval_dir,'figures')):
         os.makedirs(os.path.join(eval_dir,'figures'))
 
-    '''evaluation code'''
+    '''evaluation code
+        dataset_renderer renders source object model for evaluation;
+        If we need target object model for evaluation, go get a new renderer.
+    '''
+
     if eval_args.getboolean('EVALUATION','COMPUTE_ERRORS'):
-        eval_calc_errors.eval_calc_errors(eval_args, eval_dir)
-    if eval_args.getboolean('EVALUATION','EVALUATE_ERRORS'):    
+        eval_calc_errors.eval_calc_errors(eval_args, eval_dir, dataset_renderer=dataset.renderer)
+    if eval_args.getboolean('EVALUATION','EVALUATE_ERRORS'):
         eval_loc.match_and_eval_performance_scores(eval_args, eval_dir)
 
 
@@ -264,15 +305,15 @@ def main():
     cyclo = train_args.getint('Embedding','NUM_CYCLO')
     if eval_args.getboolean('PLOT','EMBEDDING_PCA'):
         embedding = sess.run(codebook.embedding_normalized)
-        eval_plots.compute_pca_plot_embedding(eval_dir, embedding[::cyclo], np.array(test_embeddings[0]))
+        eval_plots.compute_pca_plot_embedding(eval_dir, embedding[::cyclo], np.array(test_embeddings[0]), obj_id=obj_id)
     if eval_args.getboolean('PLOT','VIEWSPHERE'):
-        eval_plots.plot_viewsphere_for_embedding(dataset.viewsphere_for_embedding[::cyclo], eval_dir)
+        eval_plots.plot_viewsphere_for_embedding(dataset.viewsphere_for_embedding[::cyclo], eval_dir, obj_id=obj_id)
     if eval_args.getboolean('PLOT','CUM_T_ERROR_HIST'):
-        eval_plots.plot_t_err_hist(np.array(t_errors), eval_dir)
-        eval_plots.plot_t_err_hist2(np.array(t_errors), eval_dir)
+        eval_plots.plot_t_err_hist(np.array(t_errors), eval_dir, obj_id=obj_id)
+        eval_plots.plot_t_err_hist2(np.array(t_errors), eval_dir, obj_id=obj_id)
     if eval_args.getboolean('PLOT','CUM_R_ERROR_HIST'):
         eval_plots.plot_R_err_hist(eval_args, eval_dir, scenes)
-        eval_plots.plot_R_err_hist2(np.array(R_errors), eval_dir)
+        eval_plots.plot_R_err_hist2(np.array(R_errors), eval_dir, obj_id=obj_id)
     if eval_args.getboolean('PLOT','CUM_VSD_ERROR_HIST'):
         eval_plots.plot_vsd_err_hist(eval_args, eval_dir, scenes)
     if eval_args.getboolean('PLOT','VSD_OCCLUSION'):

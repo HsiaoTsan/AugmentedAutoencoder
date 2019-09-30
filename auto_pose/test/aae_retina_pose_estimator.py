@@ -24,7 +24,7 @@ class AePoseEstimator:
 
         test_args = configparser.ConfigParser()
         test_args.read(test_configpath)
-
+        self.test_args = test_args # lxc
         workspace_path = os.environ.get('AE_WORKSPACE_PATH')
 
         if workspace_path == None:
@@ -102,15 +102,16 @@ class AePoseEstimator:
         size = int(np.maximum(h, w) * pad_factor)
 
         
-        # left = np.maximum(x+w//2-size//2, 0)
-        # right = x+w//2+size//2
-        # top = np.maximum(y+h//2-size//2, 0)
-        # bottom = y+h//2+size//2
-        left = x
-        right = x+w
-        top = y
-        bottom = y+h
-        print("left {} right {} top {} bottom {}".format(left, right, top, bottom))
+        left = np.maximum(x+w//2-size//2, 0)
+        right = x+w//2+size//2
+        top = np.maximum(y+h//2-size//2, 0)
+        bottom = y+h//2+size//2
+
+        # left = x
+        # right = x+w # without padding
+        # top = y
+        # bottom = y+h
+        #print("left {} right {} top {} bottom {}".format(left, right, top, bottom))
         scene_crop = scene_img[top:bottom, left:right].copy()
 
         if black_borders:
@@ -169,16 +170,18 @@ class AePoseEstimator:
 
 
     def process_pose(self, filtered_boxes, filtered_labels, color_img, depth_img=None, camPose=None):
-
+        normalize_pointcloud = True
+        inexact_model = True
+        subtract_ktrain = False
         H, W = color_img.shape[:2]
 
         all_pose_estimates = []
         all_class_idcs = []
-
+        K_test = np.array(eval(self.test_args.get('CAMERA', 'K_test'))).reshape(3,3) # intrinsic of RealSense.
+        Kinv = np.linalg.inv(K_test)
 
         for j,(box_xywh,label) in enumerate(zip(filtered_boxes,filtered_labels)):
             H_est = np.eye(4)
-            print("box_xywh:", box_xywh)
             try:
                 clas_idx = self.class_names.index(label)
             except:
@@ -192,6 +195,29 @@ class AePoseEstimator:
                                                 resize=self.patch_sizes[clas_idx], 
                                                 interpolation=cv2.INTER_LINEAR,
                                                 black_borders=True)
+            
+            
+            # len(Rs_est) = top_n
+            # test_depth = f_test / f_syn * z_syn * diag_bb_ratio OR
+            # test_depth = z_syn * (l_real / l_syn) where l is the diagonal length in mm.
+            voc_classes =   {
+                            'bottle': 0,
+                            'box': 1,
+                            'brush': 2,
+                            'cabbage': 3,
+                            'dolphin': 4,
+                            'eggplant': 5,
+                            'hedgehog': 6,
+                            'lion': 7,
+                            'polarbear': 8,
+                            'squirrel': 9
+                            }
+            L_objects = {0:250.4, 2:327.5, 3:260., 4:318.7, 5:277.4, 6:266.7, 
+                         8:308.7, 7:345.0, 9:294.6}
+            L_object = L_objects[label]
+            print("label:", label)
+            print("L_object:", L_object)
+            
 
             Rs_est, ts_est = self.all_codebooks[clas_idx].auto_pose6d(self.sess, 
                                                                         det_img, 
@@ -199,7 +225,24 @@ class AePoseEstimator:
                                                                         self._camK,
                                                                         1, 
                                                                         self.all_train_args[clas_idx], 
-                                                                        upright=self._upright)
+                                                                        upright=self._upright,
+                                                                        subtract_ktrain=subtract_ktrain,
+                                                                        inexact_model = inexact_model,
+                                                                        L_object = L_object
+                                                                        )
+            print("estimated translation:", ts_est[0])
+
+            if depth_img is not None:
+                # look at real x,y,z, currently support one object only.
+                x, y, w, h = np.array(box_xywh).astype(np.int32)
+                R_est, t_est = Rs_est[0], ts_est[0]
+                u_center, v_center = x+w//2, y+h//2
+                z_real = depth_img[v_center, u_center]
+                translation_real = z_real*Kinv.dot([u_center, v_center, 1])
+                print("real translation: ", translation_real[:3])
+
+            # calculate the diagonal length of synthetic object in real world.
+            # assume diagonal points A and B have the same depth z.
 
             R_est = Rs_est.squeeze()
             t_est = ts_est.squeeze()
@@ -208,8 +251,8 @@ class AePoseEstimator:
                 assert H == depth_img.shape[0]
                 
                 print("mean real depth:", np.mean(depth_img))
-                # interpo_method = cv2.INTER_NEAREST
-                interpo_method = cv2.INTER_LINEAR
+                interpo_method = cv2.INTER_NEAREST
+                # interpo_method = cv2.INTER_LINEAR
                 depth_crop = self.extract_square_patch(depth_img, 
                                                     box_xywh,
                                                     self.pad_factors[clas_idx],
@@ -223,23 +266,27 @@ class AePoseEstimator:
 
                 R_est_auto = R_est.copy()
                 t_est_auto = t_est.copy()
-                print("t_est:", t_est)
                 # first refine: Rotation and Translation.
-                R_est, t_est = self.icp_handle.icp_refinement(depth_crop, R_est, t_est, self._camK, (W,H), clas_idx=clas_idx, depth_only=True)
-                
+                # depth only set to False by lxc.
+                R_est, t_est = self.icp_handle.icp_refinement(depth_crop, R_est, t_est, self._camK, (W,H), clas_idx=clas_idx, depth_only=False, normalize_pointcloud=normalize_pointcloud)
+                print("icp refine 1 t_est:", t_est)
                 # second refine: depth only.
-                _, ts_est = self.all_codebooks[clas_idx].auto_pose6d(self.sess, 
-                                                                            det_img, 
-                                                                            box_xywh, 
-                                                                            self._camK,
-                                                                            1, 
-                                                                            self.all_train_args[clas_idx], 
-                                                                            upright=self._upright,
-                                                                            depth_pred=t_est[2])
+                # _, ts_est = self.all_codebooks[clas_idx].auto_pose6d(self.sess, 
+                #                                                             det_img, 
+                #                                                             box_xywh, 
+                #                                                             self._camK,
+                #                                                             1, 
+                #                                                             self.all_train_args[clas_idx], 
+                #                                                             upright=self._upright,
+                #                                                             depth_pred=t_est[2],
+                #                                                             subtract_ktrain=subtract_ktrain,
+                #                                                             inexact_model=False,
+                #                                                             L_object = L_object 
+                #                                                             )
                 t_est = ts_est.squeeze()
-
+                print("codebook refine t_est:", t_est)
                 # third refine: Rotation only.
-                R_est, _ = self.icp_handle.icp_refinement(depth_crop, R_est, ts_est.squeeze(), self._camK, (W,H), clas_idx=clas_idx, no_depth=True)
+                # R_est, _ = self.icp_handle.icp_refinement(depth_crop, R_est, ts_est.squeeze(), self._camK, (W,H), clas_idx=clas_idx, no_depth=True, normalize_pointcloud=normalize_pointcloud)
                 # depth_crop = self.extract_square_patch(depth_img, 
                 #                                     box_xywh,
                 #                                     self.pad_factors[clas_idx],

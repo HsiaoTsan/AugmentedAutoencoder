@@ -87,19 +87,24 @@ class Codebook(object):
 
 
 
-    def auto_pose6d(self, session, x, predicted_bb, K_test, top_n, train_args, depth_pred=None, upright=False):
+    def auto_pose6d(self, 
+                    session, x, predicted_bb, K_test, top_n, train_args, 
+                    depth_pred=None, upright=False, subtract_ktrain = True,
+                    inexact_model = False, L_object = None, target_source_length_ratio = 1.
+                    ):
         '''
         x: image patch containing object. x.shape = (h,w,3) or (N,h,w,3)
         predicted_bb: [x,y,w,h]
         K_test: testset's camera intrinsic parameter
+        subtract_ktrain: add by lxc. if True, prediction on translation x,y is affected by K_train.
+        inexact_model: add by lxc. if True, use z = L_object / (diag_pred_bb/f_test) to predict z
+                       instead of z = diag_bb_ratio * mean_K_ratio * render_radius.
+        L_object: add by lxc. diagonal length of object in mm. it is used when inexact_model = True.
+
+
         '''
-
-
-
         idcs = self.nearest_rotation(session, x, top_n=top_n, upright=upright,return_idcs=True)
         Rs_est = self._dataset.viewsphere_for_embedding[idcs]
-
-
 
         # test_depth = f_test / f_train * render_radius * diag_bb_ratio
         K_train = np.array(eval(train_args.get('Dataset','K'))).reshape(3,3)
@@ -117,13 +122,31 @@ class Codebook(object):
         for i,idx in enumerate(idcs):
 
             rendered_bb = self.embed_obj_bbs_values[idx].squeeze()
+            print("rendered_bb:",rendered_bb)
+            print("predicted_bb:",predicted_bb)
             if depth_pred is None:
-                diag_bb_ratio = np.linalg.norm(np.float32(rendered_bb[2:])) / np.linalg.norm(np.float32(predicted_bb[2:]))
-                z = diag_bb_ratio * mean_K_ratio * render_radius
+                len_diag_syn = np.linalg.norm(np.float32(rendered_bb[2:]))
+                len_diag_pred = np.linalg.norm(np.float32(predicted_bb[2:]))
+                diag_bb_ratio = len_diag_syn / len_diag_pred
+                z = diag_bb_ratio * mean_K_ratio * render_radius * target_source_length_ratio # lxc
+                print("z_est before *target_source_length_ratio:", z/target_source_length_ratio)
+                print("z_est after  *target_source_length_ratio:", z)
+                print("target_source_length_ratio:", target_source_length_ratio)
+
+                print("bb_diag_syn {}\nbb_diag_pred {}\ndiag_bb_ratio {}\nmean_K_ratio {}\nz {}".format(
+                      len_diag_syn,   len_diag_pred,    diag_bb_ratio,    mean_K_ratio,    z))
+
             else:
                 z = depth_pred
 
 
+            if inexact_model: # lxc. is this equation right? z = z_syn * (l_real/ l_syn),  l_real in mm, l_syn in mm.
+                x, y, w, h = np.array(predicted_bb).astype(np.int32)
+                Kinv = np.linalg.inv(K_test)
+                diff_diagonal_points = Kinv.dot([w,h,0])
+                L_detected = np.linalg.norm(diff_diagonal_points) # = diag_pred_bb/f_test
+                print("predicted diagonal length of detected object:", L_detected)
+                z = L_object / L_detected # z = L_object / (diag_pred_bb/f_test)
             # object center in image plane (bb center =/= object center)
             center_obj_x_train = rendered_bb[0] + rendered_bb[2]/2. - K_train[0,2]
             center_obj_y_train = rendered_bb[1] + rendered_bb[3]/2. - K_train[1,2]
@@ -131,8 +154,21 @@ class Codebook(object):
             center_obj_x_test = predicted_bb[0] + predicted_bb[2]/2 - K_test[0,2]
             center_obj_y_test = predicted_bb[1] + predicted_bb[3]/2 - K_test[1,2]
             
-            center_obj_mm_x = center_obj_x_test * z / K_test[0,0] - center_obj_x_train * render_radius / K_train[0,0]  
-            center_obj_mm_y = center_obj_y_test * z / K_test[1,1] - center_obj_y_train * render_radius / K_train[1,1]  
+
+
+
+            if subtract_ktrain:
+                center_obj_mm_x = center_obj_x_test * z / K_test[0,0] - center_obj_x_train * render_radius / K_train[0,0]  
+                center_obj_mm_y = center_obj_y_test * z / K_test[1,1] - center_obj_y_train * render_radius / K_train[1,1]  
+            else:
+                # lxc. more accurate for grasping
+                # reset z by compensating dividing diag_bb_ratio. (multiplied by diag_bb_ratio before)
+                # model size may be smaller than real size of object, therefore
+                # rendered_bb is smaller than predicted_bb, thus ratio_bb could be small.
+                # if depth_pred is not None: diag_bb_ratio = 1 
+                # z /= diag_bb_ratio
+                center_obj_mm_x = center_obj_x_test * z / K_test[0,0]
+                center_obj_mm_y = center_obj_y_test * z / K_test[1,1]
 
 
             t_est = np.array([center_obj_mm_x, center_obj_mm_y, z])
@@ -152,8 +188,24 @@ class Codebook(object):
             R_corrected = np.dot(R_corr_y,np.dot(R_corr_x,Rs_est[i]))
             Rs_est[i] = R_corrected
         return (Rs_est, ts_est)
-        
 
+        
+    def calc_translation(self, K_test, train_args, rendered_bb, predicted_bb, z):
+        '''this function is added by lxc.'''
+        K_train = np.array(eval(train_args.get('Dataset','K'))).reshape(3,3)
+        render_radius = train_args.getfloat('Dataset','RADIUS')
+        # object center in image plane (bb center =/= object center)
+        center_obj_x_train = rendered_bb[0] + rendered_bb[2]/2. - K_train[0,2]
+        center_obj_y_train = rendered_bb[1] + rendered_bb[3]/2. - K_train[1,2]
+
+        center_obj_x_test = predicted_bb[0] + predicted_bb[2]/2 - K_test[0,2]
+        center_obj_y_test = predicted_bb[1] + predicted_bb[3]/2 - K_test[1,2]
+        
+        center_obj_mm_x = center_obj_x_test * z / K_test[0,0] - center_obj_x_train * render_radius / K_train[0,0]  
+        center_obj_mm_y = center_obj_y_test * z / K_test[1,1] - center_obj_y_train * render_radius / K_train[1,1]  
+
+        t_est = np.array([center_obj_mm_x, center_obj_mm_y, z])
+        return t_est
 
 
     def nearest_rotation_batch(self, session, x):
@@ -241,12 +293,17 @@ class Codebook(object):
         # embedding_z = embedding_z.T
         normalized_embedding = embedding_z / np.linalg.norm( embedding_z, axis=1, keepdims=True )
         SAVE_EMBED_TO_FILE = bool(self._dataset._kw['save_embed_to_file']) # lxc
-        if SAVE_EMBED_TO_FILE: 
+        try: 
+            dataset_name = self._dataset._kw['DATASETNAME']
+        except:
+            dataset_name = 'toyota' # temporarily
+        print("dataset_name:", dataset_name)
+        if SAVE_EMBED_TO_FILE:
             import pickle
             model_path = self._dataset._kw['model_path']
             obj_name = model_path.split('/')[-1].split('.')[0]
-            norm_embed_path = path.join(self._dataset.dataset_path, '{}_normalized_embedding.pickle'.format(obj_name))
-            unnorm_embed_path = path.join(self._dataset.dataset_path, '{}_unnormed_embedding.pickle'.format(obj_name))
+            norm_embed_path = path.join(self._dataset.dataset_path, '{}_{}_normalized_embedding.pickle'.format(dataset_name,obj_name))
+            unnorm_embed_path = path.join(self._dataset.dataset_path, '{}_{}_unnormed_embedding.pickle'.format(dataset_name,obj_name))
             # if path.exists(unnorm_embed_path):
             #     print("file {} already exists.".format(unnorm_embed_path))
             # else:

@@ -7,8 +7,8 @@ from renderer import SynRenderer
 # Constants
 N = 3000                                 # number of random points in the dataset
 dim = 3                                     # number of dimensions of the points
-max_mean_dist_factor = 1.0
-angle_change_limit = 0.35 # = 20 deg #0.5236=30 deg
+max_mean_dist_factor = 8.0
+angle_change_limit = 999 # 0.35 # = 20 deg #0.5236=30 deg
 
 
 class ICP():
@@ -159,20 +159,48 @@ class ICP():
         return T, distances, i
 
 
-    def icp_refinement(self,depth_crop, R_est, t_est, K_test, test_render_dims, depth_only=False, no_depth=False,clas_idx=0):
+    def icp_refinement(self,depth_crop, R_est, t_est, K_test, test_render_dims, 
+                        depth_only=False, 
+                        no_depth=False,
+                        clas_idx=0,
+                        normalize_pointcloud = False):
+        # R_x = transform.rotation_matrix(angle=np.pi, direction=[1,0,0])[:3, :3] # test for polarbear
+        # R_est = R_x.dot(R_est)
         synthetic_pts = self.syn_renderer.generate_synthetic_depth(K_test, R_est, t_est, test_render_dims, clas_idx=clas_idx)
         centroid_synthetic_pts = np.mean(synthetic_pts, axis=0) # millimeter
         print("mean depth of syn depth:", np.mean(synthetic_pts))
+        print("maximal depth of syn depth:", np.max(synthetic_pts))
+        print("centroid_synthetic_pts:", centroid_synthetic_pts)
+
         max_mean_dist = np.max(np.linalg.norm(synthetic_pts - centroid_synthetic_pts,axis=1))
         print 'max_mean_dist', max_mean_dist
         K_test_crop = K_test.copy()
         K_test_crop[0,2] = depth_crop.shape[0]/2
         K_test_crop[1,2] = depth_crop.shape[1]/2
         real_depth_pts = misc.rgbd_to_point_cloud(K_test_crop,depth_crop)[0]
-        print 'number of real depth points: ', len(real_depth_pts)
-        real_synmean_dist = np.linalg.norm(real_depth_pts-centroid_synthetic_pts,axis=1)
-        real_depth_pts = real_depth_pts[real_synmean_dist < max_mean_dist_factor*max_mean_dist]
-        print 'filtered number of points real and syn: ', len(real_depth_pts), len(synthetic_pts)
+        centroid_real_pts = np.mean(real_depth_pts, axis=0)
+        max_mean_dist_real = np.max(np.linalg.norm(real_depth_pts - centroid_real_pts,axis=1))
+
+
+        if normalize_pointcloud:
+            centralized_syn_pts = synthetic_pts - centroid_synthetic_pts
+            synthetic_pts = centralized_syn_pts / max_mean_dist
+            real_depth_pts = real_depth_pts[real_depth_pts[:, 2] < 950] # lxc #lxc. remove the plane point.
+            print("len(real_depth_pts):",len(real_depth_pts))
+            centralized_real_pts = real_depth_pts - centroid_real_pts
+            real_depth_pts = centralized_real_pts / max_mean_dist_real
+        else:
+            print("centroid_real_pts:",centroid_real_pts)
+            print("max_mean_dist_real:",max_mean_dist_real)
+
+            print 'number of real depth points: ', len(real_depth_pts)
+            print('mean real_depth_pts', np.mean(real_depth_pts))
+            print('max real_depth_pts', np.max(real_depth_pts))
+            real_synmean_dist = np.linalg.norm(real_depth_pts-centroid_synthetic_pts,axis=1)
+            print('mean real_synmean_dist', np.mean(real_synmean_dist))
+            print('max real_synmean_dist', np.max(real_synmean_dist))
+            real_depth_pts = real_depth_pts[real_synmean_dist < max_mean_dist_factor*max_mean_dist]
+            print 'filtered number of points real and syn: ', len(real_depth_pts), len(synthetic_pts)
 
         if len(real_depth_pts) == 0: # lxc
             print("filtered real depth points not enough: ", len(real_depth_pts))

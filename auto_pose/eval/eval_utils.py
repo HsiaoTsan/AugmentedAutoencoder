@@ -24,6 +24,8 @@ def get_gt_scene_crops(scene_id, eval_args, train_args):
 
     H = train_args.getint('Dataset','H')
 
+    # linemod with 13 objects and linemod with 15 objects may use the same md5 file!
+    # for example, 7 in 13 is duck, but 7 in 15 is cup!
     cfg_string = str([scene_id] + eval_args.items('DATA') + eval_args.items('BBOXES') + [H])
     current_config_hash = hashlib.md5(cfg_string).hexdigest()
     # current_config_hash = cfg_string

@@ -16,6 +16,9 @@ from sixd_toolkit.pysixd import inout,pose_error
 from sixd_toolkit.params import dataset_params
 
 view_idx = 0
+import sys
+reload(sys)
+sys.setdefaultencoding('utf8') # to avoid UnicodeEncodeError
 
 def plot_reconstruction_test(sess, encoder, decoder, x):
 
@@ -65,8 +68,8 @@ def plot_reconstruction_test_batch(sess, codebook, decoder, test_img_crops, noof
     all_nns_img = tiles(np.array(nearest_neighbors),len(nearest_neighbors),1,10,10)
 
     reconstruction_imgs = np.hstack(( tiles(x, 4, 4), tiles(reconst, 4, 4)))
-    cv2.imwrite(os.path.join(eval_dir,'figures','reconstruction_imgs.png'), reconstruction_imgs*255)
-    cv2.imwrite(os.path.join(eval_dir,'figures','nearest_neighbors_imgs.png'), all_nns_img)
+    cv2.imwrite(os.path.join(eval_dir,'figures','reconstruction_imgs_{:02d}.png'.format(obj_id)), reconstruction_imgs*255)
+    cv2.imwrite(os.path.join(eval_dir,'figures','nearest_neighbors_imgs_{:02d}.png'.format(obj_id)), all_nns_img)
 
 def plot_reconstruction_train(sess, decoder, train_code):
     if train_code.ndim == 1:
@@ -236,6 +239,8 @@ def plot_scene_with_estimate(test_img,renderer,K_test, R_est_old, t_est_old,R_es
     scene_view[obj_in_scene > 0] = obj_in_scene[obj_in_scene > 0]
     cv2.rectangle(scene_view, (xmin,ymin),(xmax,ymax), (0,255,0), 2)
     cv2.putText(scene_view, '%s: %1.3f' % (obj_id,test_score), (xmin, ymax+20), cv2.FONT_ITALIC, .5, (0,255,0), 2)
+    # cv2.putText(scene_view,"Source: ToyotaLight 15; Target TEJANI 04.", (0, 20), cv2.FONT_ITALIC, .5, (0,255,0), 2)
+
     cv2.imshow('scene_estimation',scene_view)
 
     obj_in_scene_ref, _ = renderer.render( obj_id=0, W=test_img.shape[1],H=test_img.shape[0], K=K_test.copy(), R=R_est_ref, t=np.array(t_est_ref),near=10,far=10000,random_light=False)
@@ -247,6 +252,7 @@ def plot_scene_with_estimate(test_img,renderer,K_test, R_est_old, t_est_old,R_es
     # scene_view_refined[obj_in_scene_ref > 0] = obj_in_scene_ref[obj_in_scene_ref > 0]
     cv2.rectangle(scene_view_refined, (xmin,ymin),(xmax,ymax), (0,255,0), 2)
     cv2.putText(scene_view_refined,'%s: %1.3f' % (obj_id,test_score), (xmin, ymax+20), cv2.FONT_ITALIC, .5, (0,255,0), 2)
+    # cv2.putText(scene_view_refined,"Source: ToyotaLight 15; Target TEJANI 04.", (0, 20), cv2.FONT_ITALIC, .5, (0,255,0), 2)
     cv2.imshow('scene_estimation_refined',scene_view_refined)
     cv2.waitKey(0)
     # cv2.imwrite('/net/rmc-lx0314/home_local/sund_ma/autoencoder_ws/bosch/thr_sc2_obj7/%s.png'% view_idx,scene_view_refined)
@@ -260,7 +266,7 @@ def plot_scene_with_estimate(test_img,renderer,K_test, R_est_old, t_est_old,R_es
     #         cv2.imshow('ground truth scene_estimation',scene_view)
 
 
-def compute_pca_plot_embedding(eval_dir, z_train, z_test=None, save=True):
+def compute_pca_plot_embedding(eval_dir, z_train, z_test=None, save=True, obj_id = 0):
     sklearn_pca = PCA(n_components=3)
     full_z_pca = sklearn_pca.fit_transform(z_train)
     if z_test is not None:
@@ -280,23 +286,25 @@ def compute_pca_plot_embedding(eval_dir, z_train, z_test=None, save=True):
     ax.set_zlabel('pc3')
 
     plt.legend()
-    pl.dump(fig,file(os.path.join(eval_dir,'figures','pca_embedding.pickle'),'wb'))
+    pl.dump(fig,file(os.path.join(eval_dir,'figures','pca_embedding_{:02d}.pickle'.format(obj_id)),'wb'))
+    plt.savefig(os.path.join(eval_dir,'figures','pca_embedding_{:02d}.png'.format(obj_id)), dpi=300)
     if save:
-        plt.savefig(os.path.join(eval_dir,'figures','pca_embedding.pdf'))
+        plt.savefig(os.path.join(eval_dir,'figures','pca_embedding_{:02d}.pdf'.format(obj_id)))
 
 
-def plot_viewsphere_for_embedding(Rs_viewpoints, eval_dir):
+def plot_viewsphere_for_embedding(Rs_viewpoints, eval_dir, obj_id = 0):
     fig = plt.figure()
     ax = Axes3D(fig)
     c=np.linspace(0, 1, len(Rs_viewpoints))
     ax.scatter(Rs_viewpoints[:,2,0],Rs_viewpoints[:,2,1],Rs_viewpoints[:,2,2], c=c, marker='.', label='embed viewpoints')
     plt.title('Embedding Viewpoints')
     plt.legend()
-    plt.savefig(os.path.join(eval_dir,'figures','embedding_viewpoints.pdf'))
+    plt.savefig(os.path.join(eval_dir,'figures','embedding_viewpoints_{:02d}.png'.format(obj_id)), dpi=300)
+    plt.savefig(os.path.join(eval_dir,'figures','embedding_viewpoints_{:02d}.pdf'.format(obj_id)))
 
 
 
-def plot_t_err_hist(t_errors, eval_dir):
+def plot_t_err_hist(t_errors, eval_dir, obj_id = 0):
 
     x = np.sort(np.abs(t_errors[:,0]))
     y = np.sort(np.abs(t_errors[:,1]))
@@ -313,9 +321,10 @@ def plot_t_err_hist(t_errors, eval_dir):
     plt.xlabel('translation err [mm]')
     plt.ylabel('recall')
     plt.legend(['cum x error','cum y error','cum z error'])
+    plt.savefig(os.path.join(eval_dir,'figures','t_err_hist_{:02d}.png'.format(obj_id)), dpi=300) #lxc
     tikz_save(os.path.join(eval_dir,'latex','t_err_hist.tex'), figurewidth ='0.45\\textheight', figureheight='0.45\\textheight', show_info=False)
 
-def plot_t_err_hist2(t_errors, eval_dir, bins=15):
+def plot_t_err_hist2(t_errors, eval_dir, bins=15, obj_id = 0):
     fig = plt.figure()
     plt.title('Translation Error Histogram')
     plt.xlabel('translation err [mm]')
@@ -328,9 +337,11 @@ def plot_t_err_hist2(t_errors, eval_dir, bins=15):
         bin_count.append(len(bin_idcs[0]))
     middle_bin = bounds[:-1] + (bounds[1]-bounds[0])/2.
     plt.bar(middle_bin,bin_count,100*0.5/bins)
+    plt.savefig(os.path.join(eval_dir,'figures','t_err_hist2_{:02d}.png'.format(obj_id)), dpi=300)
+
     tikz_save(os.path.join(eval_dir,'latex','t_err_hist2.tex'), figurewidth ='0.45\\textheight', figureheight='0.45\\textheight', show_info=False)
 
-def plot_R_err_hist2(R_errors, eval_dir, bins=15):
+def plot_R_err_hist2(R_errors, eval_dir, bins=15, obj_id=0):
 
     fig = plt.figure()
     plt.title('Rotation Error Histogram')
@@ -343,6 +354,8 @@ def plot_R_err_hist2(R_errors, eval_dir, bins=15):
         bin_count.append(len(bin_idcs[0]))
     middle_bin = bounds[:-1] + (bounds[1]-bounds[0])/2.
     plt.bar(middle_bin,bin_count,180*0.5/bins)
+    plt.savefig(os.path.join(eval_dir,'figures','R_err_hist2_{:02d}.png'.format(obj_id)), dpi=300)
+
     tikz_save(os.path.join(eval_dir,'latex','R_err_hist2.tex'), figurewidth ='0.45\\textheight', figureheight='0.45\\textheight', show_info=False)
 
 
@@ -355,8 +368,8 @@ def plot_R_err_hist(eval_args, eval_dir, scene_ids):
     obj_id = eval_args.getint('DATA','obj_id')
 
 
-    if top_n_eval < 1:
-        return
+    # if top_n_eval < 1: # why?
+    #     return
 
     data_params = dataset_params.get_dataset_params(dataset_name, model_type='', train_type='', test_type=cam_type, cam_type=cam_type)
 
@@ -424,6 +437,8 @@ def plot_R_err_hist(eval_args, eval_dir, scene_ids):
         
         legend += ['top {0} angle err, AUC = {1:.4f}'.format(n,AUC_angle), 'top {0} rectified angle err, AUC = {1:.4f}'.format(n,AUC_angle_rect)]
     plt.legend(legend)
+    plt.savefig(os.path.join(eval_dir,'figures','R_err_hist_{:02d}.png'.format(obj_id)), dpi=300)
+
     tikz_save(os.path.join(eval_dir,'latex','R_err_hist.tex'), figurewidth ='0.45\\textheight', figureheight='0.45\\textheight', show_info=False)
 
 def print_trans_rot_errors(gts, obj_id, ts_est, ts_est_old, Rs_est, Rs_est_old):      
@@ -461,6 +476,8 @@ def print_trans_rot_errors(gts, obj_id, ts_est, ts_est_old, Rs_est, Rs_est_old):
     return (t_errs[min_t_err_idx], R_err)
         
 def plot_vsd_err_hist(eval_args, eval_dir, scene_ids):
+    # THIS DOES NOT WORK WELL FOR MULTIPLE INSTANCE
+    # E.G. TEJANI 04 MILK. lxc
     top_n_eval = eval_args.getint('EVALUATION','TOP_N_EVAL')
     top_n = eval_args.getint('METRIC','TOP_N')
     delta = eval_args.getint('METRIC','VSD_DELTA')
@@ -470,8 +487,8 @@ def plot_vsd_err_hist(eval_args, eval_dir, scene_ids):
     dataset_name = eval_args.get('DATA','dataset')
     obj_id = eval_args.getint('DATA','obj_id')
 
-    if top_n_eval < 1:
-        return
+    # if top_n_eval < 1:
+    #     return
 
     data_params = dataset_params.get_dataset_params(dataset_name, model_type='', train_type='', test_type=cam_type, cam_type=cam_type)
     
@@ -531,6 +548,9 @@ def plot_vsd_err_hist(eval_args, eval_dir, scene_ids):
         
         legend += ['top {0} vsd err, AUC = {1:.4f}'.format(n,AUC_vsd)]
     plt.legend(legend)
+    plt.savefig(os.path.join(eval_dir,'figures','vsd_err_hist_{:02d}.png'.format(obj_id)), dpi=300)
+
+
     tikz_save(os.path.join(eval_dir,'latex','vsd_err_hist.tex'), figurewidth ='0.45\\textheight', figureheight='0.45\\textheight', show_info=False)
 
 def plot_vsd_occlusion(eval_args, eval_dir, scene_ids, all_test_visibs, bins = 10):
@@ -540,9 +560,10 @@ def plot_vsd_occlusion(eval_args, eval_dir, scene_ids, all_test_visibs, bins = 1
     delta = eval_args.getint('METRIC','VSD_DELTA')
     tau = eval_args.getint('METRIC','VSD_TAU')
     cost = eval_args.get('METRIC','VSD_COST')
+    obj_id = eval_args.getint('DATA','obj_id')
 
-    if top_n_eval < 1:
-        return
+    # if top_n_eval < 1:
+    #     return
 
     all_vsd_errs = []
     for scene_id in scene_ids:
@@ -598,14 +619,16 @@ def plot_vsd_occlusion(eval_args, eval_dir, scene_ids, all_test_visibs, bins = 1
     # count_str = 'bin count ' + bins * '%s ' 
     # count_str = count_str % tuple(bin_count)
     plt.title('Visibility vs Mean VSD Error' + str(bin_count))
+    plt.savefig(os.path.join(eval_dir,'figures','vsd_occlusion_{:02d}.png'.format(obj_id)), dpi=300)
+
     tikz_save(os.path.join(eval_dir,'latex','vsd_occlusion.tex'), figurewidth ='0.45\\textheight', figureheight='0.45\\textheight', show_info=False)
     
 def plot_re_rect_occlusion(eval_args, eval_dir, scene_ids, all_test_visibs, bins = 10):
-
+    obj_id = eval_args.getint('DATA','obj_id')
     top_n_eval = eval_args.getint('EVALUATION','TOP_N_EVAL')
     top_n = eval_args.getint('METRIC','TOP_N')
-    if top_n_eval < 1:
-        return
+    # if top_n_eval < 1:
+    #     return
         
     all_angle_errs = []
     for scene_id in scene_ids:
@@ -654,6 +677,8 @@ def plot_re_rect_occlusion(eval_args, eval_dir, scene_ids, all_test_visibs, bins
     # count_str = 'bin count ' + bins * '%s ' 
     # count_str = count_str % tuple(bin_count)
     plt.title('Visibility vs Median Rectified Rotation Error' + str(bin_count))
+    plt.savefig(os.path.join(eval_dir,'figures','R_err_occlusion_{:02d}.png'.format(obj_id)), dpi=300)
+
     tikz_save(os.path.join(eval_dir,'latex','R_err_occlusion.tex'), figurewidth ='0.45\\textheight', figureheight='0.45\\textheight', show_info=False)
     
 
